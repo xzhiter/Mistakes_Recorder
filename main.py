@@ -2,6 +2,7 @@ import os
 import sys
 from io import BytesIO
 
+import fitz
 import numpy as np
 import pygame
 from PIL import Image
@@ -11,10 +12,6 @@ from docx.oxml.ns import qn
 from docx.shared import Cm
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
-
-pygame.init()
-screen = pygame.display.set_mode((1100, 700))
-pygame.display.set_caption("错题整理", "错题整理")
 
 APP_ID = "50456921"
 API_KEY = "LkYuuEYW5tawMXUHtPAbXuG4"
@@ -30,19 +27,6 @@ class TextRect:
         location = inf["location"]
         self.cut_rect = pygame.Rect(location["left"], location["top"], location["width"], location["height"])
         self.rect = pygame.Rect(self.cut_rect.x // 6, self.cut_rect.y // 6, self.cut_rect.w // 6, self.cut_rect.h // 6)
-
-    def draw(self):
-        if self.flag == 0:
-            color = (255, 0, 0)
-        elif self.flag == 1:
-            color = (0, 255, 0)
-        elif self.flag == 2:
-            color = (0, 0, 255)
-        elif self.flag == 3:
-            color = (255, 230, 0)
-        else:
-            color = (0, 255, 255)
-        pygame.draw.rect(screen, color, self.rect, 1)
 
 
 class QuestionRect:
@@ -76,8 +60,37 @@ class QuestionRect:
                 self.touched = _i
 
 
+def pdf(pdf_path, image_path):
+    print("    正在将pdf文件转换为图片...")
+    pdf_doc = fitz.open(pdf_path)
+    for pg in range(pdf_doc.page_count):
+        pdf_page = pdf_doc[pg]
+        rotate = int(0)
+        zoom_x = 4
+        zoom_y = 4
+        mat = fitz.Matrix(zoom_x, zoom_y).prerotate(rotate)
+        pix = pdf_page.get_pixmap(matrix=mat, alpha=False)
+        if not os.path.exists(image_path):
+            os.makedirs(image_path)
+        if "__single__section__XZHRO" in pdf_path:
+            last = "__single__section__XZHRO"
+        else:
+            last = ""
+        pix._writeIMG(f"{image_path}/{pg}{last}.png", format_=1, jpg_quality=None)
+
+
 class Page:
     def __init__(self, path):
+        if os.path.splitext(path)[1] == ".pdf":
+            pdf(path, "./__ache__")
+            images = os.listdir("./__ache__")
+            images_num = len(images)
+            image_item = 0
+            for p in images:
+                image_item += 1
+                print(f"    正在处理pdf文件的第{image_item}页，共{images_num}页。")
+                Page("./__ache__" + "\\" + p)
+            return
         f = open(path, "rb")
         file_bin = f.read()
         result = client.accurate(file_bin)["words_result"]
@@ -95,14 +108,18 @@ class Page:
                 pos.append([rect.cut_rect.center[0], 0])
                 self.rects.append(rect)
         x = np.array(pos)
-        scores = []
-        means = []
-        for _k in range(2, 5, 1):
-            k_means = KMeans(n_clusters=_k).fit(x)
-            scores.append(silhouette_score(x, k_means.labels_, metric="euclidean"))
-            means.append(k_means)
-        self.section_num = scores.index(max(scores)) + 2
-        k_means = means[self.section_num - 2]
+        if "__single__section__XZHRO" not in path:
+            scores = []
+            means = []
+            for _k in range(2, 5, 1):
+                k_means = KMeans(n_clusters=_k).fit(x)
+                scores.append(silhouette_score(x, k_means.labels_, metric="euclidean"))
+                means.append(k_means)
+            self.section_num = scores.index(max(scores)) + 2
+            k_means = means[self.section_num - 2]
+        else:
+            self.section_num = 1
+            k_means = KMeans(n_clusters=1).fit(x)
         centers = k_means.cluster_centers_.copy()
         labels = list(range(self.section_num))
         for _i in range(self.section_num - 1):
@@ -135,7 +152,6 @@ class Page:
                 section_rect[last].w = _i.cut_rect.w + _i.cut_rect.x - section_rect[last].x
             section_rect[last].h = _i.cut_rect.y + _i.cut_rect.h - section_rect[last].y
         self.section_rects = section_rect
-        num_0 = ("一、", "二、", "三、", "四、")
         num = ("1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.", "10.", "11.", "12.", "13.", "14.", "15.", "16.",
                "17.", "18.", "19.", "20.", "21.", "22.")
         question_rects = []
@@ -159,7 +175,8 @@ class Page:
                 section = _i.flag
                 question_rects[_item].cut_rect.append(_i.cut_rect.copy())
             if question_rects[_item].cut_rect[rect_item].x > _i.cut_rect.x:
-                question_rects[_item].cut_rect[rect_item].w += question_rects[_item].cut_rect[rect_item].x - _i.cut_rect.x
+                question_rects[_item].cut_rect[rect_item].w += question_rects[_item].cut_rect[
+                                                                   rect_item].x - _i.cut_rect.x
                 question_rects[_item].cut_rect[rect_item].x = _i.cut_rect.x
             if question_rects[_item].cut_rect[rect_item].w + question_rects[_item].cut_rect[rect_item].x < \
                     _i.cut_rect.w + _i.cut_rect.x:
@@ -170,114 +187,122 @@ class Page:
         for _i in question_rects:
             _i.done()
         self.question_rects = question_rects
+        pages.append(self)
 
 
-pages = []
-item = 0
-dir_path = input("请输入目录：")
-paths = os.listdir(dir_path)
-for i in paths:
-    page = Page(dir_path + "\\" + i)
-    pages.append(page)
-
-while True:
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            document = Document()
-            docx_section = document.sections[0]
-            docx_section.page_width = Cm(18.2)
-            docx_section.page_height = Cm(25.7)
-            docx_section.top_margin = Cm(0.3)
-            docx_section.right_margin = Cm(0.9)
-            docx_section.bottom_margin = Cm(1.3)
-            docx_section.left_margin = Cm(1.4)
-            sectPr = docx_section._sectPr
-            cols = sectPr.xpath("./w:cols")[0]
-            cols.set(qn("w:num"), "2")
-            cols.set(qn("w:space"), "20")
-            for k in pages:
-                for i in k.question_rects:
-                    if i.selected:
-                        img_size = [0, 0]
-                        for j in i.cut_rect:
-                            if j.w > img_size[0]:
-                                img_size[0] = j.w
-                            img_size[1] += j.h
-                        new = Image.new("RGB", (img_size[0], img_size[1]), (255, 255, 255))
-                        y = 0
-                        for j in i.cut_rect:
-                            new.paste(k.pil_image.crop((j.x, j.y, j.x + j.w, j.y + j.h)), (0, y))
-                            y += j.h
-                        imgByteArr = BytesIO()
-                        new.save(imgByteArr, format="PNG")
-                        document.add_picture(imgByteArr, width=Cm(7.7))
-            document.save("./test.docx")
-            sys.exit()
-        if event.type == pygame.MOUSEBUTTONDOWN:
-            for r in pages[item].question_rects:
-                if r.touched > -1:
-                    r.selected = not r.selected
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_RIGHT:
-                item += 1
-                if item >= len(pages):
-                    item = 0
-            if event.key == pygame.K_LEFT:
-                item -= 1
-                if item < 0:
-                    item = len(pages) - 1
-            if event.key == pygame.K_DELETE:
+if __name__ == "__main__":
+    pages = []
+    item = 0
+    print("这是控制台窗口。")
+    dir_path = input("请输入目录：")
+    paths = os.listdir(dir_path)
+    file_num = len(paths)
+    file_item = 0
+    for i in paths:
+        file_item += 1
+        print(f"正在处理\"{i}\"，这是第{file_item}个文件，共{file_num}个文件。")
+        Page(dir_path + "\\" + i)
+    pygame.init()
+    screen = pygame.display.set_mode((1100, 700))
+    pygame.display.set_caption("错题整理", "错题整理")
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                document = Document()
+                docx_section = document.sections[0]
+                docx_section.page_width = Cm(18.2)
+                docx_section.page_height = Cm(25.7)
+                docx_section.top_margin = Cm(0.3)
+                docx_section.right_margin = Cm(0.9)
+                docx_section.bottom_margin = Cm(1.3)
+                docx_section.left_margin = Cm(1.4)
+                sectPr = docx_section._sectPr
+                cols = sectPr.xpath("./w:cols")[0]
+                cols.set(qn("w:num"), "2")
+                cols.set(qn("w:space"), "20")
+                for k in pages:
+                    for i in k.question_rects:
+                        if i.selected:
+                            img_size = [0, 0]
+                            for j in i.cut_rect:
+                                if j.w > img_size[0]:
+                                    img_size[0] = j.w
+                                img_size[1] += j.h
+                            new = Image.new("RGB", (img_size[0], img_size[1]), (255, 255, 255))
+                            y = 0
+                            for j in i.cut_rect:
+                                new.paste(k.pil_image.crop((j.x, j.y, j.x + j.w, j.y + j.h)), (0, y))
+                                y += j.h
+                            imgByteArr = BytesIO()
+                            new.save(imgByteArr, format="PNG")
+                            document.add_picture(imgByteArr, width=Cm(7.7))
+                document.save("./test.docx")
+                sys.exit()
+            if event.type == pygame.MOUSEBUTTONDOWN:
                 for r in pages[item].question_rects:
                     if r.touched > -1:
-                        del r.cut_rect[r.touched]
-                        del r.rect[r.touched]
-            if event.key == pygame.K_a:
-                for r in pages[item].question_rects:
-                    if r.touched > -1:
-                        r.cut_rect[r.touched].x -= 10
-                        r.cut_rect[r.touched].w += 10
-                        r.done()
-            if event.key == pygame.K_w:
-                for r in pages[item].question_rects:
-                    if r.touched > -1:
-                        r.cut_rect[r.touched].y -= 10
-                        r.cut_rect[r.touched].h += 10
-                        r.done()
-            if event.key == pygame.K_d:
-                for r in pages[item].question_rects:
-                    if r.touched > -1:
-                        r.cut_rect[r.touched].w += 10
-                        r.done()
-            if event.key == pygame.K_s:
-                for r in pages[item].question_rects:
-                    if r.touched > -1:
-                        r.cut_rect[r.touched].h += 10
-                        r.done()
-            if event.key == pygame.K_l:
-                for r in pages[item].question_rects:
-                    if r.touched > -1:
-                        r.cut_rect[r.touched].x += 10
-                        r.cut_rect[r.touched].w -= 10
-                        r.done()
-            if event.key == pygame.K_k:
-                for r in pages[item].question_rects:
-                    if r.touched > -1:
-                        r.cut_rect[r.touched].y += 10
-                        r.cut_rect[r.touched].h -= 10
-                        r.done()
-            if event.key == pygame.K_j:
-                for r in pages[item].question_rects:
-                    if r.touched > -1:
-                        r.cut_rect[r.touched].w -= 10
-                        r.done()
-            if event.key == pygame.K_i:
-                for r in pages[item].question_rects:
-                    if r.touched > -1:
-                        r.cut_rect[r.touched].h -= 10
-                        r.done()
-    screen.fill((255, 255, 255))
-    screen.blit(pages[item].image, (0, 0))
-    for r in pages[item].question_rects:
-        r.sense()
-        r.draw()
-    pygame.display.update()
+                        r.selected = not r.selected
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_RIGHT:
+                    item += 1
+                    if item >= len(pages):
+                        item = 0
+                if event.key == pygame.K_LEFT:
+                    item -= 1
+                    if item < 0:
+                        item = len(pages) - 1
+                if event.key == pygame.K_DELETE:
+                    for r in pages[item].question_rects:
+                        if r.touched > -1:
+                            del r.cut_rect[r.touched]
+                            del r.rect[r.touched]
+                if event.key == pygame.K_a:
+                    for r in pages[item].question_rects:
+                        if r.touched > -1:
+                            r.cut_rect[r.touched].x -= 10
+                            r.cut_rect[r.touched].w += 10
+                            r.done()
+                if event.key == pygame.K_w:
+                    for r in pages[item].question_rects:
+                        if r.touched > -1:
+                            r.cut_rect[r.touched].y -= 10
+                            r.cut_rect[r.touched].h += 10
+                            r.done()
+                if event.key == pygame.K_d:
+                    for r in pages[item].question_rects:
+                        if r.touched > -1:
+                            r.cut_rect[r.touched].w += 10
+                            r.done()
+                if event.key == pygame.K_s:
+                    for r in pages[item].question_rects:
+                        if r.touched > -1:
+                            r.cut_rect[r.touched].h += 10
+                            r.done()
+                if event.key == pygame.K_l:
+                    for r in pages[item].question_rects:
+                        if r.touched > -1:
+                            r.cut_rect[r.touched].x += 10
+                            r.cut_rect[r.touched].w -= 10
+                            r.done()
+                if event.key == pygame.K_k:
+                    for r in pages[item].question_rects:
+                        if r.touched > -1:
+                            r.cut_rect[r.touched].y += 10
+                            r.cut_rect[r.touched].h -= 10
+                            r.done()
+                if event.key == pygame.K_j:
+                    for r in pages[item].question_rects:
+                        if r.touched > -1:
+                            r.cut_rect[r.touched].w -= 10
+                            r.done()
+                if event.key == pygame.K_i:
+                    for r in pages[item].question_rects:
+                        if r.touched > -1:
+                            r.cut_rect[r.touched].h -= 10
+                            r.done()
+        screen.fill((255, 255, 255))
+        screen.blit(pages[item].image, (0, 0))
+        for r in pages[item].question_rects:
+            r.sense()
+            r.draw()
+        pygame.display.update()
