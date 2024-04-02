@@ -12,29 +12,26 @@ from docx.oxml.ns import qn
 from docx.shared import Cm
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
-
-APP_ID = "50456921"
-API_KEY = "LkYuuEYW5tawMXUHtPAbXuG4"
-SECRET_KEY = "9cBz1D3137fOHxC3j5G1byOty8EH2TH2"
-
-client = AipOcr(APP_ID, API_KEY, SECRET_KEY)
+from PyQt6.QtWidgets import QFileDialog, QApplication
 
 
 class TextRect:
-    def __init__(self, inf):
+    def __init__(self, inf, rate):
         self.text = inf["words"]
         self.flag = -1
         location = inf["location"]
         self.cut_rect = pygame.Rect(location["left"], location["top"], location["width"], location["height"])
-        self.rect = pygame.Rect(self.cut_rect.x // 6, self.cut_rect.y // 6, self.cut_rect.w // 6, self.cut_rect.h // 6)
+        self.rect = pygame.Rect(int(self.cut_rect.x * rate), int(self.cut_rect.y * rate), int(self.cut_rect.w * rate),
+                                int(self.cut_rect.h * rate))
 
 
 class QuestionRect:
-    def __init__(self, rect):
+    def __init__(self, rect, rate):
         self.cut_rect = [rect]
         self.rect = []
         self.touched = -1
         self.selected = False
+        self.rate = rate
 
     def draw(self):
         if self.touched > -1:
@@ -51,7 +48,8 @@ class QuestionRect:
     def done(self):
         self.rect = []
         for _i in self.cut_rect:
-            self.rect.append(pygame.Rect(_i.x // 6, _i.y // 6, _i.w // 6, _i.h // 6))
+            self.rect.append(pygame.Rect(int(_i.x * self.rate), int(_i.y * self.rate), int(_i.w * self.rate),
+                                         int(_i.h * self.rate)))
 
     def sense(self):
         self.touched = -1
@@ -99,12 +97,16 @@ class Page:
         f.close()
         del file_bin
         size = image.get_size()
-        self.image = pygame.transform.smoothscale(image, (image.get_width() // 6, image.get_height() // 6))
+        rate = screen_size[0] / size[0]
+        if size[1] * rate > screen_size[1]:
+            rate = screen_size[1] / size[1]
+        self.rate = rate
+        self.image = pygame.transform.smoothscale(image, (int(image.get_width() * rate), int(image.get_height() * rate)))
         self.rects = []
         pos = []
         for _i in result:
             if len(_i["words"]) > -1:
-                rect = TextRect(_i)
+                rect = TextRect(_i, rate)
                 pos.append([rect.cut_rect.center[0], 0])
                 self.rects.append(rect)
         x = np.array(pos)
@@ -164,7 +166,7 @@ class Page:
             for _j in num:
                 if _i.text.startswith(_j):
                     _item += 1
-                    question_rects.append(QuestionRect(_i.cut_rect.copy()))
+                    question_rects.append(QuestionRect(_i.cut_rect.copy(), rate))
                     section = _i.flag
                     rect_item = 0
                     continue
@@ -191,10 +193,15 @@ class Page:
 
 
 if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    with open("./options.dict", "r") as f:
+        options = eval(f.read())
+    screen_size = options["size"]
+    client = AipOcr(options["APP_ID"], options["API_KEY"], options["SECRET_KEY"])
     pages = []
     item = 0
     print("这是控制台窗口。")
-    dir_path = input("请输入目录：")
+    dir_path = QFileDialog.getExistingDirectory(None, "浏览", "C:/")
     paths = os.listdir(dir_path)
     file_num = len(paths)
     file_item = 0
@@ -203,7 +210,7 @@ if __name__ == "__main__":
         print(f"正在处理\"{i}\"，这是第{file_item}个文件，共{file_num}个文件。")
         Page(dir_path + "\\" + i)
     pygame.init()
-    screen = pygame.display.set_mode((1100, 700))
+    screen = pygame.display.set_mode(screen_size)
     pygame.display.set_caption("错题整理", "错题整理")
     while True:
         for event in pygame.event.get():
@@ -236,7 +243,7 @@ if __name__ == "__main__":
                             imgByteArr = BytesIO()
                             new.save(imgByteArr, format="PNG")
                             document.add_picture(imgByteArr, width=Cm(7.7))
-                document.save("./test.docx")
+                document.save(QFileDialog.getSaveFileName(None, "保存", "C:/", "Word 文档 (*.docx)")[0])
                 sys.exit()
             if event.type == pygame.MOUSEBUTTONDOWN:
                 for r in pages[item].question_rects:
