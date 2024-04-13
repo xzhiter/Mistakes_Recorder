@@ -1,18 +1,23 @@
 import os
 import sys
+import base64
+import traceback
 from io import BytesIO
 
 import fitz
 import numpy as np
 import pygame
 from PIL import Image
+from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
+from PyQt6.QtWidgets import QFileDialog, QApplication, QMainWindow
 from aip import AipOcr
 from docx import Document
 from docx.oxml.ns import qn
 from docx.shared import Cm
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
-from PyQt6.QtWidgets import QFileDialog, QApplication
+
+from win import Ui_MainWindow
 
 
 class TextRect:
@@ -26,12 +31,13 @@ class TextRect:
 
 
 class QuestionRect:
-    def __init__(self, rect, rate):
+    def __init__(self, rect, rate, surface):
         self.cut_rect = [rect]
         self.rect = []
         self.touched = -1
         self.selected = False
         self.rate = rate
+        self.surface = surface
 
     def draw(self):
         if self.touched > -1:
@@ -39,11 +45,11 @@ class QuestionRect:
         else:
             color = (0, 0, 255)
         for _i in self.rect:
-            pygame.draw.rect(screen, color, _i, 1)
+            pygame.draw.rect(self.surface, color, _i, 1)
             if self.selected:
                 surface = pygame.Surface((_i.w - 2, _i.h - 2), pygame.SRCALPHA)
                 surface.fill((0, 255, 0, 100))
-                screen.blit(surface, (_i.x + 1, _i.y + 1))
+                self.surface.blit(surface, (_i.x + 1, _i.y + 1))
 
     def done(self):
         self.rect = []
@@ -59,13 +65,12 @@ class QuestionRect:
 
 
 def pdf(pdf_path, image_path):
-    print("    正在将pdf文件转换为图片...")
     pdf_doc = fitz.open(pdf_path)
     for pg in range(pdf_doc.page_count):
         pdf_page = pdf_doc[pg]
         rotate = int(0)
-        zoom_x = 4
-        zoom_y = 4
+        zoom_x = 5
+        zoom_y = 5
         mat = fitz.Matrix(zoom_x, zoom_y).prerotate(rotate)
         pix = pdf_page.get_pixmap(matrix=mat, alpha=False)
         if not os.path.exists(image_path):
@@ -78,16 +83,12 @@ def pdf(pdf_path, image_path):
 
 
 class Page:
-    def __init__(self, path):
+    def __init__(self, path, surface, pages):
         if os.path.splitext(path)[1] == ".pdf":
             pdf(path, "./__ache__")
             images = os.listdir("./__ache__")
-            images_num = len(images)
-            image_item = 0
             for p in images:
-                image_item += 1
-                print(f"    正在处理pdf文件的第{image_item}页，共{images_num}页。")
-                Page("./__ache__" + "\\" + p)
+                Page("./__ache__" + "\\" + p, surface, pages)
             return
         f = open(path, "rb")
         file_bin = f.read()
@@ -166,7 +167,7 @@ class Page:
             for _j in num:
                 if _i.text.startswith(_j):
                     _item += 1
-                    question_rects.append(QuestionRect(_i.cut_rect.copy(), rate))
+                    question_rects.append(QuestionRect(_i.cut_rect.copy(), rate, surface))
                     section = _i.flag
                     rect_item = 0
                     continue
@@ -192,26 +193,21 @@ class Page:
         pages.append(self)
 
 
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    with open("./options.dict", "r") as f:
-        options = eval(f.read())
-    screen_size = options["size"]
-    client = AipOcr(options["APP_ID"], options["API_KEY"], options["SECRET_KEY"])
+def process(dir_path):
     pages = []
+    err = []
     item = 0
-    print("这是控制台窗口。")
-    dir_path = QFileDialog.getExistingDirectory(None, "浏览", "C:/")
     paths = os.listdir(dir_path)
-    file_num = len(paths)
     file_item = 0
-    for i in paths:
-        file_item += 1
-        print(f"正在处理\"{i}\"，这是第{file_item}个文件，共{file_num}个文件。")
-        Page(dir_path + "\\" + i)
     pygame.init()
     screen = pygame.display.set_mode(screen_size)
     pygame.display.set_caption("错题整理", "错题整理")
+    for i in paths:
+        file_item += 1
+        try:
+            Page(dir_path + "\\" + i, screen, pages)
+        except:
+            err.append((dir_path + "\\" + i, traceback.format_exc()))
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -242,9 +238,13 @@ if __name__ == "__main__":
                                 y += j.h
                             imgByteArr = BytesIO()
                             new.save(imgByteArr, format="PNG")
+                            # imgByteArr.seek(0)
+                            # result = client.remove_handwriting(imgByteArr.read())
+                            # b = base64.b64decode(result["image_processed"])
+                            # img = BytesIO(b)
                             document.add_picture(imgByteArr, width=Cm(7.7))
-                document.save(QFileDialog.getSaveFileName(None, "保存", "C:/", "Word 文档 (*.docx)")[0])
-                sys.exit()
+                pygame.quit()
+                return document
             if event.type == pygame.MOUSEBUTTONDOWN:
                 for r in pages[item].question_rects:
                     if r.touched > -1:
@@ -313,3 +313,43 @@ if __name__ == "__main__":
             r.sense()
             r.draw()
         pygame.display.update()
+
+
+class Thread(QThread):
+    signal_tuple = pyqtSignal(tuple)
+
+    def __init__(self, func):
+        super().__init__()
+        self.func = func
+
+    def run(self):
+        result = self.func()
+        self.signal_tuple.emit((result, 1))
+
+
+class Window(QMainWindow, Ui_MainWindow):
+    def __init__(self, parent=None):
+        QMainWindow.__init__(self, parent=parent)
+        self.setupUi(self)
+        self.actionOpen.triggered.connect(self.setup_thread)
+
+    def setup_thread(self):
+        dir_path = QFileDialog.getExistingDirectory(win, "浏览", "C:/")
+        self.thread_ = Thread(lambda: process(dir_path))
+        self.thread_.signal_tuple.connect(self.thread_finished)
+        self.thread_.start()
+
+    @pyqtSlot(tuple)
+    def thread_finished(self, item):
+        item[0].save(QFileDialog.getSaveFileName(win, "保存", "C:/", "Word 文档 (*.docx)")[0])
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    win = Window()
+    with open("./options.dict", "r") as f:
+        options = eval(f.read())
+    screen_size = options["size"]
+    client = AipOcr(options["APP_ID"], options["API_KEY"], options["SECRET_KEY"])
+    win.show()
+    app.exec()
