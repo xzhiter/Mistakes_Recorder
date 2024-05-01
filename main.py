@@ -429,7 +429,7 @@ if __name__ == "__main__":
             "SECRET_KEY": "",
             "erase": False,
             "yd_id": "",
-            "yd_secret": ""
+            "yd_key": ""
         }
         with open("./options.pkl", "wb") as f:
             pickle.dump(options, f)
