@@ -1,6 +1,6 @@
 import os
+import pickle
 import sys
-import base64
 import traceback
 from io import BytesIO
 
@@ -9,7 +9,7 @@ import numpy as np
 import pygame
 from PIL import Image
 from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
-from PyQt6.QtWidgets import QFileDialog, QApplication, QMainWindow
+from PyQt6.QtWidgets import QFileDialog, QApplication, QMainWindow, QMessageBox, QDialog
 from aip import AipOcr
 from docx import Document
 from docx.oxml.ns import qn
@@ -17,6 +17,9 @@ from docx.shared import Cm
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 
+import ocr
+import erase
+import settings
 from win import Ui_MainWindow
 
 
@@ -102,7 +105,8 @@ class Page:
         if size[1] * rate > screen_size[1]:
             rate = screen_size[1] / size[1]
         self.rate = rate
-        self.image = pygame.transform.smoothscale(image, (int(image.get_width() * rate), int(image.get_height() * rate)))
+        self.image = pygame.transform.smoothscale(image,
+                                                  (int(image.get_width() * rate), int(image.get_height() * rate)))
         self.rects = []
         pos = []
         for _i in result:
@@ -166,11 +170,23 @@ class Page:
                 continue
             for _j in num:
                 if _i.text.startswith(_j):
-                    _item += 1
-                    question_rects.append(QuestionRect(_i.cut_rect.copy(), rate, surface))
-                    section = _i.flag
-                    rect_item = 0
-                    continue
+                    if len(_i.text) != len(_j):
+                        _i.text += "     "
+                    if len(_i.text) == len(_j):
+                        cut = True
+                    elif not _i.text[len(_j)] in "0123456789":
+                        cut = True
+                    elif _i.text[len(_j) + 4] == "年" or _i.text[len(_j) + 1] == "分" or _i.text[len(_j) + 2] == "分"\
+                            or _i.text[len(_j) + 3] == "分":
+                        cut = True
+                    else:
+                        cut = False
+                    if cut:
+                        _item += 1
+                        question_rects.append(QuestionRect(_i.cut_rect.copy(), rate, surface))
+                        section = _i.flag
+                        rect_item = 0
+                        continue
             if _item == -1:
                 continue
             if _i.flag != section:
@@ -193,7 +209,8 @@ class Page:
         pages.append(self)
 
 
-def process(dir_path):
+def process(dir_path, sub):
+    sub_index = index[sub]
     pages = []
     err = []
     item = 0
@@ -204,10 +221,7 @@ def process(dir_path):
     pygame.display.set_caption("错题整理", "错题整理")
     for i in paths:
         file_item += 1
-        try:
-            Page(dir_path + "\\" + i, screen, pages)
-        except:
-            err.append((dir_path + "\\" + i, traceback.format_exc()))
+        Page(dir_path + "\\" + i, screen, pages)
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -219,8 +233,8 @@ def process(dir_path):
                 docx_section.right_margin = Cm(0.9)
                 docx_section.bottom_margin = Cm(1.3)
                 docx_section.left_margin = Cm(1.4)
-                sectPr = docx_section._sectPr
-                cols = sectPr.xpath("./w:cols")[0]
+                sect_pr = docx_section._sectPr
+                cols = sect_pr.xpath("./w:cols")[0]
                 cols.set(qn("w:num"), "2")
                 cols.set(qn("w:space"), "20")
                 for k in pages:
@@ -236,13 +250,25 @@ def process(dir_path):
                             for j in i.cut_rect:
                                 new.paste(k.pil_image.crop((j.x, j.y, j.x + j.w, j.y + j.h)), (0, y))
                                 y += j.h
-                            imgByteArr = BytesIO()
-                            new.save(imgByteArr, format="PNG")
-                            # imgByteArr.seek(0)
-                            # result = client.remove_handwriting(imgByteArr.read())
-                            # b = base64.b64decode(result["image_processed"])
-                            # img = BytesIO(b)
-                            document.add_picture(imgByteArr, width=Cm(7.7))
+                            img_byte = BytesIO()
+                            new.save(img_byte, format="PNG")
+                            num = len(sub_index)
+                            with open(f"./{sub}/{num}.png", "wb") as file:
+                                info = {
+                                    "path": f"./{sub}/{num}.png",
+                                    "removed": f"./{sub}/{num}_removed.png",
+                                    "num": 0,
+                                    "processed": False
+                                }
+                                sub_index.append(info)
+                                file.write(img_byte.getvalue())
+                            if options["erase"]:
+                                with open(f"./{sub}/{num}_removed.png", "wb") as file:
+                                    file.write(erase.create_request(f"./{sub}/{num}.png"))
+                            document.add_picture(img_byte, width=Cm(7.7))
+                            # document.add_picture(img_byte, width=Cm(15.9))
+                with open(f"./{sub}/index.pkl", "wb") as file:
+                    pickle.dump(sub_index, file)
                 pygame.quit()
                 return document
             if event.type == pygame.MOUSEBUTTONDOWN:
@@ -315,6 +341,13 @@ def process(dir_path):
         pygame.display.update()
 
 
+def err_handler(path, sub):
+    try:
+        return process(path, sub)
+    except:
+        return traceback.format_exc()
+
+
 class Thread(QThread):
     signal_tuple = pyqtSignal(tuple)
 
@@ -331,25 +364,125 @@ class Window(QMainWindow, Ui_MainWindow):
     def __init__(self, parent=None):
         QMainWindow.__init__(self, parent=parent)
         self.setupUi(self)
-        self.actionOpen.triggered.connect(self.setup_thread)
+        self.actionOpen.triggered.connect(lambda: self.setup_thread(None))
+        self.pushButtonMath.clicked.connect(lambda: self.setup_thread("math"))
+        self.pushButtonPhysics.clicked.connect(lambda: self.setup_thread("phy"))
+        self.pushButtonChem.clicked.connect(lambda: self.setup_thread("chem"))
+        self.pushButtonBio.clicked.connect(lambda: self.setup_thread("bio"))
+        self.actionSettings.triggered.connect(self.settings)
 
-    def setup_thread(self):
+    def setup_thread(self, sub):
         dir_path = QFileDialog.getExistingDirectory(win, "浏览", "C:/")
-        self.thread_ = Thread(lambda: process(dir_path))
+        self.thread_ = Thread(lambda: err_handler(dir_path, sub))
         self.thread_.signal_tuple.connect(self.thread_finished)
         self.thread_.start()
 
     @pyqtSlot(tuple)
     def thread_finished(self, item):
-        item[0].save(QFileDialog.getSaveFileName(win, "保存", "C:/", "Word 文档 (*.docx)")[0])
+        if isinstance(item[0], str):
+            QMessageBox.critical(win, "程序运行出错", f"请将以下信息拍照发给开发者：\n{item[0]}")
+        else:
+            item[0].save(QFileDialog.getSaveFileName(win, "保存", "C:/", "Word 文档 (*.docx)")[0])
+
+    def settings(self):
+        class Settings(QDialog, settings.Ui_Dialog):
+            def __init__(self, parent=win):
+                QDialog.__init__(self, parent)
+                self.setupUi(self)
+                self.lineEdit.setText(str(options["size"][0]))
+                self.lineEdit_2.setText(str(options["size"][1]))
+                self.checkBox.setChecked(options["online"])
+                self.lineEdit_3.setText(options["APP_ID"])
+                self.lineEdit_4.setText(options["API_KEY"])
+                self.lineEdit_5.setText(options["SECRET_KEY"])
+                self.checkBox_2.setChecked(options["erase"])
+                self.lineEdit_6.setText(options["yd_id"])
+                self.lineEdit_7.setText(options["yd_key"])
+        settings_window = Settings()
+        settings_window.move(win.pos())
+        settings_window.exec()
+        global options
+        options = {
+            "size": (int(settings_window.lineEdit.text()), int(settings_window.lineEdit_2.text())),
+            "online": settings_window.checkBox.isChecked(),
+            "APP_ID": settings_window.lineEdit_3.text(),
+            "API_KEY": settings_window.lineEdit_4.text(),
+            "SECRET_KEY": settings_window.lineEdit_5.text(),
+            "erase": settings_window.checkBox_2.isChecked(),
+            "yd_id": settings_window.lineEdit_6.text(),
+            "yd_key": settings_window.lineEdit_7.text(),
+        }
+        with open("./options.pkl", "wb") as f_:
+            pickle.dump(options, f_)
 
 
 if __name__ == "__main__":
+    if os.path.isfile("./options.pkl"):
+        with open("./options.pkl", "rb") as f:
+            options = pickle.load(f)
+    else:
+        options = {
+            "size": (1500, 900),
+            "online": False,
+            "APP_ID": "",
+            "API_KEY": "",
+            "SECRET_KEY": "",
+            "erase": False,
+            "yd_id": "",
+            "yd_secret": ""
+        }
+        with open("./options.pkl", "wb") as f:
+            pickle.dump(options, f)
+    if not os.path.isdir("./math"):
+        os.mkdir("./math")
+    if os.path.isfile("./math/index.pkl"):
+        with open("./math/index.pkl", "rb") as f:
+            math_index = pickle.load(f)
+    else:
+        math_index = []
+        with open("./math/index.pkl", "wb") as f:
+            pickle.dump(math_index, f)
+    if not os.path.isdir("./phy"):
+        os.mkdir("./phy")
+    if os.path.isfile("./phy/index.pkl"):
+        with open("./phy/index.pkl", "rb") as f:
+            phy_index = pickle.load(f)
+    else:
+        phy_index = []
+        with open("./phy/index.pkl", "wb") as f:
+            pickle.dump(phy_index, f)
+    if not os.path.isdir("./chem"):
+        os.mkdir("./chem")
+    if os.path.isfile("./chem/index.pkl"):
+        with open("./chem/index.pkl", "rb") as f:
+            chem_index = pickle.load(f)
+    else:
+        chem_index = []
+        with open("./chem/index.pkl", "wb") as f:
+            pickle.dump(chem_index, f)
+    if not os.path.isdir("./bio"):
+        os.mkdir("./bio")
+    if os.path.isfile("./bio/index.pkl"):
+        with open("./bio/index.pkl", "rb") as f:
+            bio_index = pickle.load(f)
+    else:
+        bio_index = []
+        with open("./bio/index.pkl", "wb") as f:
+            pickle.dump(bio_index, f)
+    index = {
+        "chem": chem_index,
+        "phy": phy_index,
+        "math": math_index,
+        "bio": bio_index
+    }
+    screen_size = options["size"]
+    if options["online"]:
+        client = AipOcr(options["APP_ID"], options["API_KEY"], options["SECRET_KEY"])
+    else:
+        client = ocr
+    if options["erase"]:
+        erase.set_key(options["yd_id"], options["yd_key"])
     app = QApplication(sys.argv)
     win = Window()
-    with open("./options.dict", "r") as f:
-        options = eval(f.read())
-    screen_size = options["size"]
-    client = AipOcr(options["APP_ID"], options["API_KEY"], options["SECRET_KEY"])
     win.show()
     app.exec()
