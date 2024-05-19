@@ -115,7 +115,7 @@
      <x>0</x>
      <y>0</y>
      <width>773</width>
-     <height>21</height>
+     <height>22</height>
     </rect>
    </property>
    <widget class="QMenu" name="menuFile">
@@ -125,6 +125,9 @@
     <addaction name="actionOpen"/>
     <addaction name="actionSave"/>
     <addaction name="actionProcess_Mistakes"/>
+    <addaction name="actionExport_Docx"/>
+    <addaction name="actionPraErr"/>
+    <addaction name="actionExport_Mistakes"/>
     <addaction name="separator"/>
     <addaction name="actionSettings"/>
     <addaction name="separator"/>
@@ -134,6 +137,7 @@
     <property name="title">
      <string>帮助</string>
     </property>
+    <addaction name="actionContact_Us"/>
     <addaction name="actionCheck_Updates"/>
     <addaction name="actionAbout"/>
    </widget>
@@ -152,10 +156,16 @@
    <property name="text">
     <string>打开</string>
    </property>
+   <property name="shortcut">
+    <string>Ctrl+O</string>
+   </property>
   </action>
   <action name="actionSave">
    <property name="text">
     <string>保存</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+S</string>
    </property>
   </action>
   <action name="actionAbout">
@@ -188,7 +198,44 @@
     <string>处理错题</string>
    </property>
   </action>
+  <action name="actionPraErr">
+   <property name="text">
+    <string>重练错题</string>
+   </property>
+  </action>
+  <action name="actionExport_Mistakes">
+   <property name="text">
+    <string>导出错题</string>
+   </property>
+  </action>
+  <action name="actionContact_Us">
+   <property name="text">
+    <string>联系我们</string>
+   </property>
+  </action>
+  <action name="actionExport_Docx">
+   <property name="text">
+    <string>生成打印件</string>
+   </property>
+  </action>
  </widget>
  <resources/>
- <connections/>
+ <connections>
+  <connection>
+   <sender>actionExit</sender>
+   <signal>triggered()</signal>
+   <receiver>MainWindow</receiver>
+   <slot>close()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>-1</x>
+     <y>-1</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>386</x>
+     <y>232</y>
+    </hint>
+   </hints>
+  </connection>
+ </connections>
 </ui>

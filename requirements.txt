@@ -1,0 +1,10 @@
+PyQt6
+pillow
+cnocr
+numpy
+pygame
+scikit-learn
+requests
+Cython
+PyMuPDF
+python-docx
