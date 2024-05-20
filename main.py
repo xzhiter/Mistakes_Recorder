@@ -24,15 +24,14 @@ from sklearn.metrics import silhouette_score
 import cut
 import erase
 import feedback
-import ocr
 import practice
 import record
 import settings
 import sub_win
 from win import Ui_MainWindow
 
-
 all_ = {"math": [], "phy": [], "chem": [], "bio": []}
+
 
 class TextRect:
     def __init__(self, inf, rate):
@@ -173,8 +172,9 @@ class Page:
             section_rect[last].h = _i.cut_rect.y + _i.cut_rect.h - section_rect[last].y
         self.section_rects = section_rect
         if not cut_:
-            num = ("1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.", "10.", "11.", "12.", "13.", "14.", "15.", "16.",
-                   "17.", "18.", "19.", "20.", "21.", "22.")
+            num = (
+            "1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.", "10.", "11.", "12.", "13.", "14.", "15.", "16.",
+            "17.", "18.", "19.", "20.", "21.", "22.")
             question_rects = []
             _item = -1
             section = -1
@@ -190,7 +190,7 @@ class Page:
                             will_cut = True
                         elif not _i.text[len(_j)] in "0123456789":
                             will_cut = True
-                        elif _i.text[len(_j) + 4] == "年" or _i.text[len(_j) + 1] == "分" or _i.text[len(_j) + 2] == "分"\
+                        elif _i.text[len(_j) + 4] == "年" or _i.text[len(_j) + 1] == "分" or _i.text[len(_j) + 2] == "分" \
                                 or _i.text[len(_j) + 3] == "分":
                             will_cut = True
                         else:
@@ -412,6 +412,7 @@ def err_handler(path, sub, cut_, cut_sec, erase_handwriting):
     except:
         pygame.quit()
         err = traceback.format_exc()
+        feedback.send(err)
         return err
 
 
@@ -695,6 +696,7 @@ class Window(QMainWindow, Ui_MainWindow):
             def __init__(self, parent=win):
                 QDialog.__init__(self, parent)
                 self.setupUi(self)
+                self.checkBox.setEnabled(False)
                 self.lineEdit.setText(str(options["size"][0]))
                 self.lineEdit_2.setText(str(options["size"][1]))
                 self.checkBox.setChecked(options["online"])
@@ -704,6 +706,7 @@ class Window(QMainWindow, Ui_MainWindow):
                 self.checkBox_2.setChecked(options["erase"])
                 self.lineEdit_6.setText(options["yd_id"])
                 self.lineEdit_7.setText(options["yd_key"])
+
         settings_window = Settings()
         self.move_center(settings_window)
         settings_window.exec()
@@ -733,6 +736,7 @@ class Window(QMainWindow, Ui_MainWindow):
             def __init__(self, parent=win):
                 QDialog.__init__(self, parent)
                 self.setupUi(self)
+
         cut_win = Cut()
         self.move_center(cut_win)
         cut_win.accepted.connect(lambda: self.cut_starter(cut_win.comboBox.currentText(), cut_win.checkBox.isChecked()))
@@ -745,6 +749,7 @@ class Window(QMainWindow, Ui_MainWindow):
                 self.setupUi(self)
                 sign = {"数学": "math", "物理": "phy", "化学": "chem", "生物": "bio"}
                 self.accepted.connect(lambda: func(sign[self.comboBox.currentText()]))
+
         sub = Sub()
         self.move_center(sub)
         sub.exec()
@@ -761,6 +766,7 @@ class Window(QMainWindow, Ui_MainWindow):
                 self.comboBox_2.setEnabled(False)
                 self.comboBox_4.setEnabled(False)
                 self.checkBox.setEnabled(False)
+
         pw = Practice()
         self.move_center(pw)
         pw.accepted.connect(lambda: practice_starter(pw.comboBox_3.currentText(),
@@ -778,6 +784,7 @@ class Window(QMainWindow, Ui_MainWindow):
                 self.setupUi(self)
                 self.accepted.connect(lambda: process_mistakes(self.textEdit.toPlainText()))
                 self.rejected.connect(save_practiced)
+
         rec = Record()
         self.move_center(rec)
         rec.exec()
@@ -788,7 +795,7 @@ class Window(QMainWindow, Ui_MainWindow):
         response = requests.get("https://raw.githubusercontent.com/xzhiter/Mistakes_Recorder/main/version",
                                 headers=headers, timeout=5)
         ver = float(response.text)
-        if ver > 3.0:
+        if ver > 3.1:
             QMessageBox.information(self, "软件更新", f"检测到最新版本V{ver}")
         else:
             QMessageBox.information(self, "软件更新", "当前已是最新版本")
@@ -807,7 +814,7 @@ if __name__ == "__main__":
     else:
         options = {
             "size": (1500, 900),
-            "online": False,
+            "online": True,
             "APP_ID": "",
             "API_KEY": "",
             "SECRET_KEY": "",
@@ -860,10 +867,7 @@ if __name__ == "__main__":
         "bio": bio_index
     }
     screen_size = options["size"]
-    if options["online"]:
-        client = AipOcr(options["APP_ID"], options["API_KEY"], options["SECRET_KEY"])
-    else:
-        client = ocr
+    client = AipOcr(options["APP_ID"], options["API_KEY"], options["SECRET_KEY"])
     if options["erase"]:
         erase.set_key(options["yd_id"], options["yd_key"])
     pygame.init()
